@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Outputs: PNGs are tracked, feather is not (per CLAUDE.md)
+out/**/*.feather
+
+# Editor
+.vscode/
+.idea/
+*.swp
