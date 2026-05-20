@@ -12,7 +12,9 @@ For chosen calibration date D (= a row in `params_timeseries.feather`):
         OOS (out-of-sample) pair_end_date > D
         pre                pair_end_date < D - window_size + 1 BD
 
-Done at three D's at evenly-spaced quantiles of the rolling fit's date range.
+Done at three D's hardcoded in CALIBRATION_DATES (roughly 25/50/75 quantile positions in
+the 2025 rolling-fit range; fixed rather than quantile-derived so PNG filenames stay
+stable across panel extensions).
 
 Usage:
     .venv\\Scripts\\python predicted_residuals.py
@@ -39,26 +41,24 @@ logger = logging.getLogger(__name__)
 
 WINDOW_SIZE = 60
 RUN_NAME = run_name_for(window_size=WINDOW_SIZE)
-CALIBRATION_DATE_QUANTILES = (0.25, 0.50, 0.75)
+
+# Fixed calibration dates (roughly 25/50/75 quantile of the 2025 rolling-fit range).
+# Hardcoded rather than quantile-derived so the output filenames stay stable across panel
+# extensions; `params_at_date` will raise if any of these is not in the current fit_dates.
+CALIBRATION_DATES = (
+    dt.date(2025, 7, 1),
+    dt.date(2025, 9, 25),
+    dt.date(2025, 12, 22),
+)
 
 # Numbered figure prefixes: one PNG per calibration date.  Aligned positionally with
-# CALIBRATION_DATE_QUANTILES so the earliest quantile -> 19, latest -> 21.  See README.md.
+# CALIBRATION_DATES so the earliest -> 19, latest -> 21.  See README.md.
 FIGURE_NUMBERS = ("19", "20", "21")
 
 
 def feather_path() -> Path:
     """Path to the canonical 60bd rolling fit's params_timeseries.feather."""
     return run_subdir(name=RUN_NAME) / "params_timeseries.feather"
-
-
-def select_calibration_dates(fit_dates: list[dt.date], quantiles: tuple[float, ...]) -> list[dt.date]:
-    """Pick calibration dates at given quantile positions in the rolling fit's date range."""
-    n_fits = len(fit_dates)
-    selected = []
-    for quantile in quantiles:
-        index = max(0, min(n_fits - 1, round(quantile * (n_fits - 1))))
-        selected.append(fit_dates[index])
-    return selected
 
 
 def params_at_date(fit_table: dict, target_date: dt.date) -> tuple[BergomiTwoFactorParams, float, float, int]:
@@ -203,12 +203,10 @@ def main() -> None:
 
     table = feather.read_table(str(feather_path()))
     fit_table = {name: list(table.column(name).to_pylist()) for name in table.column_names}
-    fit_dates = [dt.date.fromisoformat(value) for value in fit_table["date"]]
-    calibration_dates = select_calibration_dates(fit_dates=fit_dates, quantiles=CALIBRATION_DATE_QUANTILES)
-    logger.info("Calibration dates: %s", [d.isoformat() for d in calibration_dates])
+    logger.info("Calibration dates: %s", [d.isoformat() for d in CALIBRATION_DATES])
 
     endpoint_tenor_days = (full_panel.tenor_grid_years * N_BUSINESS_DAYS_PER_YEAR).round(0)
-    for figure_number, calibration_date in zip(FIGURE_NUMBERS, calibration_dates, strict=True):
+    for figure_number, calibration_date in zip(FIGURE_NUMBERS, CALIBRATION_DATES, strict=True):
         params, rho_sx, rho_sy, _row = params_at_date(fit_table=fit_table, target_date=calibration_date)
         records = realised_innovations_with_global_params(
             full_panel=full_panel, full_spot_returns=full_spot_returns,

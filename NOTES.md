@@ -162,32 +162,63 @@ tariff-shock window).  Those days drove 5-8 sigma residuals at long
 strips on consecutive dates; any rolling window containing them
 collapses `k_y` to its lower bound to absorb the non-Bergomi residual.
 
+### Half-day snap shift
+
+NYSE half-days (1 pm ET close: day after Thanksgiving, July 3 when
+July 4 is a weekday, December 24 when Christmas falls Tuesday-Friday)
+need both a different snap and a different obs-day time accrual.  The
+default 15:55 ET snap (cache index 28500) reads ~3 hours of stale
+post-close data on those dates; the regular 6.5-hour market session
+also over-weights what's actually available to accrue.
+
+`utils.calendar_utils.half_days` lists the affected dates;
+`utils.data_assembly.fixing_for_obs_date` shifts the cache slot to
+12:55 ET (`HALF_DAY_FIXING_INDEX = 17700`, the 5-minute pre-close offset
+of the regular snap mirrored into a half-day) and flags the obs day as
+early-close.  `intraday_time_to_expiry(..., is_early_close=True)` then
+uses a 3.5-hour market session for the obs-day fraction.  Half-day
+handling on the *expiration* day (a PM-settled option whose expiry
+itself falls on a half-day) is not modelled -- the expiry day still
+contributes a full day of variance.
+
+Empirical impact (60bd rolling fit, panel range covers three half-days
+2025-07-03, 2025-11-28, 2025-12-24): `k_y < 0.01` pegs drop 26 -> 19
+on SPX and 11 -> 4 on SPXW, the same magnitude as one SKIP_DATES block
+removes.  Median parameters move <= 8% (k_y SPX: 1.25 -> 1.35); LL on
+the full-panel single fit barely moves (4576 -> 4561 SPX, 3658 -> 3638
+SPXW).  The fix is correcting a small per-strip bias on the 3 half-day
+obs dates that was previously absorbed by `k_y` collapsing on windows
+spanning them.
+
 ## Empirical findings - SPX (60bd rolling, 2025-01-02 .. 2026-03-20)
 
 | param | median | std |
 |---|---:|---:|
-| k_X (1/yr) | 5.54 | 2.07 |
-| k_Y (1/yr) | 1.25 | 0.88 |
-| theta      | 0.28 | 0.13 |
+| k_X (1/yr) | 5.60 | 1.58 |
+| k_Y (1/yr) | 1.35 | 0.86 |
+| theta      | 0.31 | 0.12 |
 | rho_xy     | 0.79 | 0.26 |
-| nu         | 1.21 | 0.29 |
+| nu         | 1.20 | 0.29 |
 | rho_SX     | -0.73 | 0.14 |
-| rho_SY     | -0.84 | 0.14 |
+| rho_SY     | -0.84 | 0.13 |
 
-Full-panel single fit: `k_x=7.67, k_y=1.96, theta=0.44, rho_xy=0.83,
-nu=1.41, rho_sx=-0.69, rho_sy=-0.87`; `LL=4576`.
+Full-panel single fit: `k_x=7.85, k_y=0.97, theta=0.24, rho_xy=0.97,
+nu=1.57, rho_sx=-0.75, rho_sy=-0.89`; `LL=4561`.  rho_xy lands near the
+upper bound (det ~ 0.004) -- a shift from the prior pre-half-day basin
+(rho_xy=0.83, det ~ 0.16) at essentially the same LL (4576 -> 4561):
+the full-panel likelihood has a wide near-optimum plateau.
 
-242/242 windows successful.  Pegs: `k_y < 0.01` 26/242; `nu > 49` 0;
+242/242 windows successful.  Pegs: `k_y < 0.01` 19/242; `nu > 49` 0;
 `theta < 0.011` 0; `rho_xy > 0.99` 25/242; `rho_SX < -0.99` 0/242;
-`rho_SY < -0.99` 8/242.  PSD frontier (det < 0.01): 77/242 (32%).
+`rho_SY < -0.99` 8/242.  PSD frontier (det < 0.01): 74/242 (31%).
 
 V-endpoint R^2 across the 7 endpoints (matching-window decomposition):
 0.88 at 21d, 0.96 at 42d, 0.97 at 63d, 0.98 at 126d, 0.96 at 189d,
 0.94 at 252d, 0.90 at 378d.
 
-Cumulative-V vol-of-V at 63 BD: empirical median 1.40, implied 1.44.
+Cumulative-V vol-of-V at 63 BD: empirical median 1.40, implied 1.45.
 Term-structure decay alpha (= -OLS slope of log std vs log tenor
-across the 7 endpoints): empirical median 0.62, implied 0.48;
+across the 7 endpoints): empirical median 0.62, implied 0.49;
 rough-vol benchmark (H ~ 0.1) is 0.4.
 
 ## Empirical findings - SPXW (60bd rolling, 2025-01-02 .. 2026-03-20)
@@ -198,23 +229,23 @@ tenor coverage.
 
 | param | median | std |
 |---|---:|---:|
-| k_X (1/yr) | 7.77 | 0.92 |
-| k_Y (1/yr) | 1.61 | 1.29 |
-| theta      | 0.24 | 0.16 |
-| rho_xy     | 0.82 | 0.37 |
-| nu         | 1.40 | 0.30 |
-| rho_SX     | -0.78 | 0.19 |
-| rho_SY     | -0.74 | 0.15 |
+| k_X (1/yr) | 7.71 | 0.90 |
+| k_Y (1/yr) | 1.66 | 1.28 |
+| theta      | 0.22 | 0.20 |
+| rho_xy     | 0.82 | 0.35 |
+| nu         | 1.38 | 0.30 |
+| rho_SX     | -0.78 | 0.18 |
+| rho_SY     | -0.76 | 0.15 |
 
-Full-panel single fit: `k_x=6.98, k_y=2.46, theta=0.45, rho_xy=0.997,
-nu=1.35, rho_sx=-0.88, rho_sy=-0.83`; `LL=3658`.  Lands at the rho_xy
-upper bound (det ~ 0.001) -- the SPXW data is pushing the
+Full-panel single fit: `k_x=7.82, k_y=0.70, theta=0.17, rho_xy=0.994,
+nu=1.62, rho_sx=-0.89, rho_sy=-0.87`; `LL=3638`.  Lands at the rho_xy
+upper bound (det ~ 0.003) -- the SPXW data is pushing the
 inter-factor correlation harder than SPX does.
 
-242/242 windows successful.  Pegs: `k_y < 0.01` 11/242 (vs 26 for SPX);
-`nu > 49` 0; `theta < 0.011` 0; `rho_xy > 0.99` 13/242 (vs 25 for SPX);
-`rho_SX < -0.99` 0/242 (vs 0); `rho_SY < -0.99` 10/242 (vs 8).  PSD
-frontier (det < 0.01): **128/242 (53%)** vs 77/242 (32%) for SPX --
+242/242 windows successful.  Pegs: `k_y < 0.01` 4/242 (vs 19 for SPX);
+`nu > 49` 0; `theta < 0.011` 0; `rho_xy > 0.99` 23/242 (vs 25 for SPX);
+`rho_SX < -0.99` 7/242 (vs 0); `rho_SY < -0.99` 10/242 (vs 8).  PSD
+frontier (det < 0.01): **127/242 (52%)** vs 74/242 (31%) for SPX --
 SPXW binds the PSD constraint much more often, consistent with the
 shorter tenor grid giving the optimizer less long-end leverage to
 separate the two factors.
@@ -224,11 +255,11 @@ V-endpoint R^2 across the 5 endpoints (matching-window decomposition):
 front R^2 essentially matches SPX (0.88 at 21d); SPXW misses the
 long-tenor (252/378 BD) endpoints SPX has.
 
-Cumulative-V vol-of-V at 63 BD: empirical median 1.37, implied 1.43
-(essentially matches SPX at 1.40 / 1.44).  Term-structure decay alpha
+Cumulative-V vol-of-V at 63 BD: empirical median 1.37, implied 1.44
+(essentially matches SPX at 1.40 / 1.45).  Term-structure decay alpha
 across 5 endpoints: empirical median 0.64, implied 0.53; rough-vol
 benchmark 0.40.  Both alphas are further from the rough-vol target
-than SPX's (0.62 / 0.48) -- the truncated grid biases the OLS slope
+than SPX's (0.62 / 0.49) -- the truncated grid biases the OLS slope
 steeper.
 
 ## Roots

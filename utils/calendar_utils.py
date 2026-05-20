@@ -56,9 +56,34 @@ holidays: frozenset[dt.date] = frozenset({
 })
 
 
+# NYSE early-close (13:00 ET) days.  Pattern: day after Thanksgiving (always); July 3 when
+# July 4 is a weekday; December 24 when Christmas falls Tuesday-Friday.  No half-day in
+# 2026 (July 4 = Saturday, observed Friday is a full close) or 2027 (July 4 = Sunday).
+# 2026-2027 entries verified against the NYSE calendar; 2023-2025 follow the published pattern.
+half_days: frozenset[dt.date] = frozenset({
+    dt.date(2023, 7, 3),     # day before Independence Day (Tue)
+    dt.date(2023, 11, 24),   # day after Thanksgiving
+    dt.date(2024, 7, 3),     # day before Independence Day (Thu)
+    dt.date(2024, 11, 29),   # day after Thanksgiving
+    dt.date(2024, 12, 24),   # Christmas Eve (Tue)
+    dt.date(2025, 7, 3),     # day before Independence Day (Fri)
+    dt.date(2025, 11, 28),   # day after Thanksgiving
+    dt.date(2025, 12, 24),   # Christmas Eve (Wed)
+    dt.date(2026, 11, 27),   # day after Thanksgiving
+    dt.date(2026, 12, 24),   # Christmas Eve (Thu)
+    dt.date(2027, 11, 26),   # day after Thanksgiving
+    dt.date(2027, 12, 24),   # Christmas observed (Fri) -- 13:00 close per NYSE
+})
+
+
 def is_business_day(date: dt.date) -> bool:
     """Return True if date is a NYSE trading day."""
     return date not in holidays and date.weekday() < 5
+
+
+def is_half_day(date: dt.date) -> bool:
+    """Return True if date is a NYSE early-close (13:00 ET) trading day."""
+    return date in half_days
 
 
 def plus_days(date: dt.date, n_days: int, increment: int = 1) -> dt.date:

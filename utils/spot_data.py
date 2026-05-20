@@ -23,8 +23,20 @@ import numpy as np
 from pyarrow import feather
 
 from utils.cache_paths import fwd_path, log_swap_path
-from utils.calendar_utils import count_business_days
+from utils.calendar_utils import count_business_days, is_half_day
 from utils.intraday_time import intraday_time_to_expiry, is_am_settled
+
+# Half-day cache snap: 12:55 ET on the 32401-point 08:00..17:00 grid.  Mirror of
+# data_assembly.HALF_DAY_FIXING_INDEX, duplicated here to avoid the import cycle
+# (data_assembly already imports from spot_data).
+_HALF_DAY_FIXING_INDEX = 17700
+
+
+def _fixing_for_obs_date(date: dt.date, base_index: int) -> tuple[int, bool]:
+    """(effective_index, is_early_close) for an observation date -- see data_assembly.fixing_for_obs_date."""
+    if is_half_day(date=date):
+        return _HALF_DAY_FIXING_INDEX, True
+    return base_index, False
 
 FWD_PROXY_ROOT = "SPXW"
 
@@ -58,11 +70,13 @@ def daily_log_fwd_returns_for_panel_pairs(
     for pair_index, end_index in enumerate(pair_end_indices):
         end_date = dates[int(end_index)]
         start_date = dates[int(end_index) - 1]
+        start_effective_index, _ = _fixing_for_obs_date(date=start_date, base_index=fixing_index)
+        end_effective_index, _ = _fixing_for_obs_date(date=end_date, base_index=fixing_index)
         fwd_at_start = read_fwd_mid_at_fixing(
-            root=root, expiration=end_date, observation_date=start_date, fixing_index=fixing_index,
+            root=root, expiration=end_date, observation_date=start_date, fixing_index=start_effective_index,
         )
         fwd_at_end = read_fwd_mid_at_fixing(
-            root=root, expiration=end_date, observation_date=end_date, fixing_index=fixing_index,
+            root=root, expiration=end_date, observation_date=end_date, fixing_index=end_effective_index,
         )
         returns[pair_index] = np.log(fwd_at_end) - np.log(fwd_at_start)
     return returns
@@ -97,12 +111,14 @@ def local_vol_per_panel_pair(
     for pair_index, end_index in enumerate(pair_end_indices):
         end_date = dates[int(end_index)]
         start_date = dates[int(end_index) - 1]
+        effective_index, is_early_close = _fixing_for_obs_date(date=start_date, base_index=fixing_index)
         raw_days = count_business_days(date_from=start_date, date_to=end_date)
         tau_years = intraday_time_to_expiry(
-            raw_days=raw_days, timestamp_index=fixing_index, am_settled=am_settled,
+            raw_days=raw_days, timestamp_index=effective_index, am_settled=am_settled,
+            is_early_close=is_early_close,
         )
         log_swap = read_log_swap_mid_at_fixing(
-            root=root, expiration=end_date, observation_date=start_date, fixing_index=fixing_index,
+            root=root, expiration=end_date, observation_date=start_date, fixing_index=effective_index,
         )
         annualized_variance = 2.0 * log_swap / tau_years
         sigma_s[pair_index] = float(np.sqrt(annualized_variance))

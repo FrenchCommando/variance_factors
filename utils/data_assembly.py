@@ -25,7 +25,7 @@ import numpy as np
 from scipy.interpolate import PchipInterpolator
 
 from utils.cache_paths import cache_folder_log_swap, log_swap_path
-from utils.calendar_utils import count_business_days, dates_iter, plus_days
+from utils.calendar_utils import count_business_days, dates_iter, is_half_day, plus_days
 from utils.intraday_time import intraday_time_to_expiry, is_am_settled
 from utils.spot_data import FWD_PROXY_ROOT, read_log_swap_mid_at_fixing
 
@@ -34,7 +34,22 @@ logger = logging.getLogger(__name__)
 N_BUSINESS_DAYS_PER_YEAR = 252
 
 # Daily fixing in the 32401-point 08:00..17:00 ET cache: 15:55 ET = 28500.
+# On NYSE half-days the snap shifts to 12:55 ET = 17700 (5 minutes before the 13:00 close,
+# matching the default's 5-minute offset from the regular 16:00 close).
 FIXING_INDEX_DEFAULT = 28500
+HALF_DAY_FIXING_INDEX = 17700
+
+
+def fixing_for_obs_date(date: dt.date, base_index: int = FIXING_INDEX_DEFAULT) -> tuple[int, bool]:
+    """Effective (cache_index, is_early_close) for an observation date.
+
+    On NYSE half-days (1pm close) the cache index shifts from 15:55 ET to 12:55 ET and the
+    obs-day market session shrinks from 6.5 to 3.5 hours.  Half-day list lives in
+    `utils.calendar_utils.half_days`.
+    """
+    if is_half_day(date=date):
+        return HALF_DAY_FIXING_INDEX, True
+    return base_index, False
 
 # Tenor grids in business days.  Benchmark matches the 1m..2y configuration used in
 # Bergomi's published 2-factor calibrations; 504d (2y) endpoint dropped because the
@@ -164,9 +179,12 @@ def load_term_structure_for_date(
 
     Skips expirations with raw_days < min_raw_days (front weeklies carry a short-dated vol
     risk premium that doesn't lie on the long-tenor forward-variance term structure).  Also
-    skips literal 0DTE.
+    skips literal 0DTE.  On NYSE half-days, `fixing_index` is treated as the base
+    (non-half-day) snap index and shifted to 12:55 ET internally; `time_to_expiry` is also
+    computed with a 3.5-hour obs session.
     """
     am_settled = is_am_settled(root=root)
+    effective_index, is_early_close = fixing_for_obs_date(date=date, base_index=fixing_index)
     points: list[TermStructurePoint] = []
     for expiration in expirations:
         raw_days = count_business_days(date_from=date, date_to=expiration)
@@ -176,16 +194,17 @@ def load_term_structure_for_date(
         if log_swap_array is None:
             msg = f"log_swap cache file for {root} expiration={expiration} date={date} is missing"
             raise ValueError(msg)
-        log_swap_mid = extract_fixing_log_swap(log_swap_array=log_swap_array, fixing_index=fixing_index)
+        log_swap_mid = extract_fixing_log_swap(log_swap_array=log_swap_array, fixing_index=effective_index)
         time_to_expiry = intraday_time_to_expiry(
-            raw_days=raw_days, timestamp_index=fixing_index, am_settled=am_settled,
+            raw_days=raw_days, timestamp_index=effective_index, am_settled=am_settled,
+            is_early_close=is_early_close,
         )
         if time_to_expiry <= 0:
             continue
         total_variance = 2.0 * log_swap_mid / time_to_expiry
         points.append(
             TermStructurePoint(
-                expiration=expiration, raw_days=raw_days, timestamp_index=fixing_index,
+                expiration=expiration, raw_days=raw_days, timestamp_index=effective_index,
                 time_to_expiry=time_to_expiry, total_variance=total_variance,
             ),
         )
@@ -307,7 +326,8 @@ def assemble_panel(  # noqa: PLR0913
         date_from: first business date considered.
         date_to: last business date considered (inclusive).
         tenor_days: endpoint tenor grid in business days, strictly increasing.
-        fixing_index: snapshot index in the 32401-point cache (28500 = 15:55 ET).
+        fixing_index: base snapshot index in the 32401-point cache (28500 = 15:55 ET on a
+            regular session day; shifted to HALF_DAY_FIXING_INDEX on half-days).
         min_raw_days: drop expirations with fewer business days than this.
         min_expiries: minimum populated expirations for a date to be retained.
         max_extrapolation_fraction: dates whose tenor grid extrapolates beyond this fraction
@@ -465,19 +485,24 @@ def snap_corrected_dte_cumulative_variance(
 ) -> float:
     """Cumulative variance over [snap, snap + advance_years] from one SPXW varswap reading.
 
-    Reads 2 * LogSwap_t^{t + raw_days BD} at fixing_index and rescales by
-    (advance_years / tau_to_close) to convert from the snap-to-PM-close integration window
-    into the snap-to-snap window the advance step uses.  The scaling assumes variance is flat
-    over the sub-day fraction between snap and close on the expiry date.  At a 15:55 ET snap
-    the correction is ~0.991; at 14:00 ET it would be ~0.823 -- worth doing structurally so
-    the formula stays right if the snap time moves.
+    Reads 2 * LogSwap_t^{t + raw_days BD} at the obs-date's effective snap index and
+    rescales by (advance_years / tau_to_close) to convert from the snap-to-PM-close
+    integration window into the snap-to-snap window the advance step uses.  The scaling
+    assumes variance is flat over the sub-day fraction between snap and close on the expiry
+    date.  At a 15:55 ET snap the correction is ~0.991; at 14:00 ET it would be ~0.823 --
+    worth doing structurally so the formula stays right if the snap time moves.
+
+    On NYSE half-days, `fixing_index` is treated as the base (non-half-day) snap index;
+    `start_date`'s effective values (12:55 ET, 3.5-hour session) are derived internally.
     """
+    effective_index, is_early_close = fixing_for_obs_date(date=start_date, base_index=fixing_index)
     end_date = plus_days(date=start_date, n_days=raw_days)
     log_swap = read_log_swap_mid_at_fixing(
-        root=FWD_PROXY_ROOT, expiration=end_date, observation_date=start_date, fixing_index=fixing_index,
+        root=FWD_PROXY_ROOT, expiration=end_date, observation_date=start_date, fixing_index=effective_index,
     )
     tau_to_close = intraday_time_to_expiry(
-        raw_days=raw_days, timestamp_index=fixing_index, am_settled=is_am_settled(root=FWD_PROXY_ROOT),
+        raw_days=raw_days, timestamp_index=effective_index, am_settled=is_am_settled(root=FWD_PROXY_ROOT),
+        is_early_close=is_early_close,
     )
     return 2.0 * log_swap * (advance_years / tau_to_close)
 

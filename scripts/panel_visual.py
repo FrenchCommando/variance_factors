@@ -25,7 +25,7 @@ from utils.cache_paths import MIN_RAW_DAYS, PANEL_TENOR_DAYS, ROOT, to_image_pat
 from utils.calendar_utils import plus_days
 from utils.data_assembly import (
     FIXING_INDEX_DEFAULT, N_BUSINESS_DAYS_PER_YEAR, assemble_panel,
-    build_varswap_index, load_term_structure_for_date, resample_term_structure,
+    build_varswap_index, fixing_for_obs_date, load_term_structure_for_date, resample_term_structure,
 )
 from utils.intraday_time import intraday_time_to_expiry, is_am_settled
 from utils.spot_data import FWD_PROXY_ROOT, read_log_swap_mid_at_fixing
@@ -61,9 +61,13 @@ def front_sigma_s_for_date(date: dt.date, fixing_index: int) -> tuple[float, flo
     end_date = plus_days(date=date, n_days=1)
     raw_days = 1
     am_settled = is_am_settled(root=FWD_PROXY_ROOT)
-    tau_years = intraday_time_to_expiry(raw_days=raw_days, timestamp_index=fixing_index, am_settled=am_settled)
+    effective_index, is_early_close = fixing_for_obs_date(date=date, base_index=fixing_index)
+    tau_years = intraday_time_to_expiry(
+        raw_days=raw_days, timestamp_index=effective_index, am_settled=am_settled,
+        is_early_close=is_early_close,
+    )
     log_swap = read_log_swap_mid_at_fixing(
-        root=FWD_PROXY_ROOT, expiration=end_date, observation_date=date, fixing_index=fixing_index,
+        root=FWD_PROXY_ROOT, expiration=end_date, observation_date=date, fixing_index=effective_index,
     )
     sigma_s = float(np.sqrt(2.0 * log_swap / tau_years))
     return float(raw_days), sigma_s
