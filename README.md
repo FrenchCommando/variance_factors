@@ -10,6 +10,13 @@ documented).
 Rolling 60-BD MLE on SPXW: the seven Bergomi-2F + spot parameters as a
 time series.  See [PNGs](#pngs) for the full catalogue.
 
+![Vol-of-V at 63 BD, SPXW](out/SPXW/17_v_volvol_63bd_SPXW.png)
+![Term-structure decay alpha, SPXW](out/SPXW/18_v_alpha_SPXW.png)
+
+Diagnostics at the cumulative-V observable: empirical vs model-implied
+vol-of-V at the 63-BD endpoint, and the term-structure decay exponent
+alpha.
+
 ## What it does
 
 Joint Gaussian MLE on `(spot_return, log_xi_increments)` per panel pair
