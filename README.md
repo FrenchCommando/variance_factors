@@ -5,6 +5,11 @@ of the methodology and the kind of results it produces; not a turn-key
 pipeline a new user can reproduce from scratch (data setup is not
 documented).
 
+![Rolling 60BD parameters, SPXW](out/SPXW/09_rolling_60bd_params_SPXW.png)
+
+Rolling 60-BD MLE on SPXW: the seven Bergomi-2F + spot parameters as a
+time series.  See [PNGs](#pngs) for the full catalogue.
+
 ## What it does
 
 Joint Gaussian MLE on `(spot_return, log_xi_increments)` per panel pair
