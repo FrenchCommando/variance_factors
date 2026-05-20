@@ -78,20 +78,61 @@ memory, stationary variance -> infinity).  Free per-window `sigma_R`
 removes this artifact: zero `k_y` pegs across the panel, with no other
 peg appearing.
 
-### Per-pair sigma_S and model-free advance
+### Per-pair sigma_S
 
-Two `sigma_S` fixes vs the prior global-sigma_S / V[front]*dt-advance
-baseline:
+Spot row of `M` uses **per-pair** `sigma_S(t_start, t_end)` from the
+front-tenor variance swap (per pair, time-varying), not a global panel
+empirical std.  Replaces a global-sigma_S baseline that was off by 3-4x
+on regime-shock-adjacent dates; together with the advance-step fix below
+it unwinds a `rho_SX` bias and pushes `rho_xy / nu` meaningfully higher
+on the rolling 60bd fit.
 
-1. Spot row of M uses **per-pair** `sigma_S(t_start, t_end)` from the
-   front-tenor variance swap (per pair, time-varying), not a global
-   panel-level empirical std.
-2. Per-option advance uses the **model-free** cumulative variance
-   `X = 2 * LogSwap_t_start^{t_end}` instead of the proxy
-   `V[t, tau_first] * dt`.
+### Daily-step cumulative variance
 
-Together these unwind a `rho_SX` bias and push `rho_xy / nu`
-meaningfully higher on the rolling 60bd fit.
+The Bergomi advance step
+
+    V_advanced_i * (tau_i - dt)  =  V_i * tau_i  -  daily_step_cumulative_variance
+
+requires `daily_step_cumulative_variance`, the cumulative variance over
+one business day `[snap_t, snap_t + 1 BD]`.  Production formula (see
+`utils/data_assembly.daily_step_cumulative_variance_min_dtes`):
+
+```
+daily_step_cumulative_variance  =  min(X_1dte_snap,  X_2dte_scaled)
+
+X_n_dte  =  2 * LogSwap_t^{t + n BD}  *  (advance_years / tau_to_close_n)
+```
+
+with both DTE candidates read from the SPXW varswap at the snap.  Two
+choices baked in:
+
+1. **Snap-to-close correction.**  The cached `LogSwapMid` integrates
+   from the snap time to the expiry's PM close.  At a 15:55 snap this
+   carries `~0.009 BD` more variance window than the snap-to-snap
+   advance step needs; scaling by `advance_years / tau_to_close`
+   removes it.  Tiny correction now (`~ x 0.991`) but material if the
+   snap moves -- at 14:00 it would be `~ x 0.823`.
+2. **`min` of 1-DTE and 2-DTE.**  The truncated `sum dK / K^2 * OTM`
+   integral is structurally inflated on third-Friday SPXW listings
+   because they inherit CBOE's third-Friday strike chain (deep-OTM puts
+   down to `K ~ 200`) that adjacent regular weeklies miss (stop near
+   `K ~ 2400`) -- even though they are the PM-settled sibling of the
+   AM-settled SPX SET that "OPEX" canonically refers to.  On any pair
+   the third-Friday SPXW listing falls at exactly one of 1-DTE
+   (Thu -> Fri) or 2-DTE (Wed -> Fri); `min` always picks the cleaner
+   regular-weekly reading and rejects the inflated one.  On pairs that
+   don't touch a third-Friday SPXW expiration, both candidates are
+   close and `min` is just slightly conservative.
+
+The min-of-two-DTEs approach trades a small downward bias in
+`daily_step_cumulative_variance` on third-Friday-SPXW-adjacent pairs
+(the cleaner weekly is still missing some wing contribution) for
+mechanical robustness against the strike-listing artifact.  The
+artifact itself is the subject of the sibling `jelly_roll` project,
+which is working on a wing-extrapolated `LogSwapMidCorrected` column.
+Once that lands, the underlying `LogSwapMid` reads here can switch to
+the corrected column; the `min` collapse will then be defensive cheap
+insurance rather than the load-bearing fix.
 
 ### PSD barrier + cold restart
 
@@ -121,36 +162,87 @@ tariff-shock window).  Those days drove 5-8 sigma residuals at long
 strips on consecutive dates; any rolling window containing them
 collapses `k_y` to its lower bound to absorb the non-Bergomi residual.
 
-## Empirical findings (60bd rolling, SPX 2025-01-02 .. 2026-03-20)
+## Empirical findings - SPX (60bd rolling, 2025-01-02 .. 2026-03-20)
 
 | param | median | std |
 |---|---:|---:|
-| k_X (1/yr) | 7.89 | 2.27 |
-| k_Y (1/yr) | 2.18 | 0.80 |
-| theta      | 0.34 | 0.29 |
-| rho_xy     | 0.74 | 0.15 |
-| nu         | 1.72 | 0.47 |
-| rho_SX     | -0.89 | 0.16 |
-| rho_SY     | -0.90 | 0.04 |
+| k_X (1/yr) | 5.54 | 2.07 |
+| k_Y (1/yr) | 1.25 | 0.88 |
+| theta      | 0.28 | 0.13 |
+| rho_xy     | 0.79 | 0.26 |
+| nu         | 1.21 | 0.29 |
+| rho_SX     | -0.73 | 0.14 |
+| rho_SY     | -0.84 | 0.14 |
 
-242/242 windows successful, zero iter=0 retries.  Pegs: `k_y < 0.01` 0
-times; `nu > 49` 0; `theta < 0.011` 0; `rho_xy > 0.99` 16/242;
-`rho_SX < -0.99` 2/242 (down from 21 before the advance fix);
-`rho_SY < -0.99` 0/242.  42/242 windows have det < 0.01 (close to PSD
-frontier).
+Full-panel single fit: `k_x=7.67, k_y=1.96, theta=0.44, rho_xy=0.83,
+nu=1.41, rho_sx=-0.69, rho_sy=-0.87`; `LL=4576`.
 
-Cumulative-V vol-of-V at 63 BD: empirical median annualized std ~ 1.7,
-implied 1.6 (signal only).  Term-structure decay alpha (= -OLS slope of
-log std vs log tenor across 7 endpoints):  empirical median 0.58,
-implied 0.48; rough-vol benchmark (H ~ 0.1) is 0.4.
+242/242 windows successful.  Pegs: `k_y < 0.01` 26/242; `nu > 49` 0;
+`theta < 0.011` 0; `rho_xy > 0.99` 25/242; `rho_SX < -0.99` 0/242;
+`rho_SY < -0.99` 8/242.  PSD frontier (det < 0.01): 77/242 (32%).
 
-## Extension
+V-endpoint R^2 across the 7 endpoints (matching-window decomposition):
+0.88 at 21d, 0.96 at 42d, 0.97 at 63d, 0.98 at 126d, 0.96 at 189d,
+0.94 at 252d, 0.90 at 378d.
 
-Currently using SPX expiries with a lot of trimming (front-week
-expirations carry a vol risk premium that doesn't lie on the long-tenor
-forward-variance curve; min_raw_days = 7).  SPXW gives more tenor
-coverage and a cleaner front -- the natural next step is to repeat the
-calibration on the SPXW panel.
+Cumulative-V vol-of-V at 63 BD: empirical median 1.40, implied 1.44.
+Term-structure decay alpha (= -OLS slope of log std vs log tenor
+across the 7 endpoints): empirical median 0.62, implied 0.48;
+rough-vol benchmark (H ~ 0.1) is 0.4.
+
+## Empirical findings - SPXW (60bd rolling, 2025-01-02 .. 2026-03-20)
+
+Truncated 4-strip grid (no 252/378 BD endpoints -- SPXW listings don't
+reach that far), so direct comparison to SPX is not apples-to-apples in
+tenor coverage.
+
+| param | median | std |
+|---|---:|---:|
+| k_X (1/yr) | 7.77 | 0.92 |
+| k_Y (1/yr) | 1.61 | 1.29 |
+| theta      | 0.24 | 0.16 |
+| rho_xy     | 0.82 | 0.37 |
+| nu         | 1.40 | 0.30 |
+| rho_SX     | -0.78 | 0.19 |
+| rho_SY     | -0.74 | 0.15 |
+
+Full-panel single fit: `k_x=6.98, k_y=2.46, theta=0.45, rho_xy=0.997,
+nu=1.35, rho_sx=-0.88, rho_sy=-0.83`; `LL=3658`.  Lands at the rho_xy
+upper bound (det ~ 0.001) -- the SPXW data is pushing the
+inter-factor correlation harder than SPX does.
+
+242/242 windows successful.  Pegs: `k_y < 0.01` 11/242 (vs 26 for SPX);
+`nu > 49` 0; `theta < 0.011` 0; `rho_xy > 0.99` 13/242 (vs 25 for SPX);
+`rho_SX < -0.99` 0/242 (vs 0); `rho_SY < -0.99` 10/242 (vs 8).  PSD
+frontier (det < 0.01): **128/242 (53%)** vs 77/242 (32%) for SPX --
+SPXW binds the PSD constraint much more often, consistent with the
+shorter tenor grid giving the optimizer less long-end leverage to
+separate the two factors.
+
+V-endpoint R^2 across the 5 endpoints (matching-window decomposition):
+0.89 at 21d, 0.94 at 42d, 0.96 at 63d, 0.97 at 126d, 0.96 at 189d --
+front R^2 essentially matches SPX (0.88 at 21d); SPXW misses the
+long-tenor (252/378 BD) endpoints SPX has.
+
+Cumulative-V vol-of-V at 63 BD: empirical median 1.37, implied 1.43
+(essentially matches SPX at 1.40 / 1.44).  Term-structure decay alpha
+across 5 endpoints: empirical median 0.64, implied 0.53; rough-vol
+benchmark 0.40.  Both alphas are further from the rough-vol target
+than SPX's (0.62 / 0.48) -- the truncated grid biases the OLS slope
+steeper.
+
+## Roots
+
+Both `SPX` and `SPXW` are supported; pick via the `VARIANCE_FACTORS_ROOT`
+env var.  Defaults wired in `utils/cache_paths.py`:
+
+| ROOT | tenor grid (BD) | min_raw_days | reason |
+|---|---|---:|---|
+| SPX  | 21, 42, 63, 126, 189, 252, 378 | 7 | LEAPS chain reaches 18 months; front-week SPX carries a vol risk premium that doesn't lie on the long-tenor forward-variance curve |
+| SPXW | 21, 42, 63, 126, 189            | 2 | only ~10 months of forward listings, so the 252/378 BD endpoints can't be reached; daily-weekly chain reaches 2 BD safely under the min-DTE advance step |
+
+The `daily_step_cumulative_variance` reads above use SPXW expiries
+regardless of panel ROOT (`spot_data.FWD_PROXY_ROOT = "SPXW"`).
 
 ## References
 

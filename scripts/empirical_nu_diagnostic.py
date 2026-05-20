@@ -35,15 +35,13 @@ from pyarrow import feather
 
 from scripts.rolling_calibration import run_name_for
 from utils.bergomi_likelihood import innovation_covariance_with_spot
-from utils.cache_paths import OUT_DIR, to_image_path
+from utils.cache_paths import MIN_RAW_DAYS, PANEL_TENOR_DAYS, ROOT, run_subdir, to_image_path
 from utils.data_assembly import (
-    FIXING_INDEX_DEFAULT, N_BUSINESS_DAYS_PER_YEAR, TENOR_DAYS_BENCHMARK, ForwardVariancePanel, assemble_panel,
-    slice_panel,
+    FIXING_INDEX_DEFAULT, N_BUSINESS_DAYS_PER_YEAR, ForwardVariancePanel, assemble_panel, slice_panel,
 )
 
 logger = logging.getLogger(__name__)
 
-ROOT = "SPX"
 WINDOW_SIZE = 60
 RUN_NAME = run_name_for(window_size=WINDOW_SIZE)
 TARGET_TENOR_DAYS = 60.0
@@ -52,7 +50,7 @@ ROUGH_VOL_ALPHA_BENCHMARK = 0.4
 
 def feather_path() -> Path:
     """Path to the saved rolling fit's params_timeseries.feather."""
-    return OUT_DIR / RUN_NAME / "params_timeseries.feather"
+    return run_subdir(name=RUN_NAME) / "params_timeseries.feather"
 
 
 def panel_date_range_from_feather() -> tuple[dt.date, dt.date]:
@@ -245,8 +243,9 @@ def main() -> None:
     date_from, date_to = panel_date_range_from_feather()
     logger.info("Assembling %s panel %s -> %s", ROOT, date_from, date_to)
     full_panel = assemble_panel(
-        root=ROOT, date_from=date_from, date_to=date_to, tenor_days=TENOR_DAYS_BENCHMARK,
-        fixing_index=FIXING_INDEX_DEFAULT, min_raw_days=7, min_expiries=5, max_extrapolation_fraction=0.10,
+        root=ROOT, date_from=date_from, date_to=date_to, tenor_days=PANEL_TENOR_DAYS,
+        fixing_index=FIXING_INDEX_DEFAULT, min_raw_days=MIN_RAW_DAYS, min_expiries=5,
+        max_extrapolation_fraction=0.10,
     )
     fitted_table = feather.read_table(feather_path()).to_pandas()
     dates, empirical_stds, implied_stds = per_window_v_stds(

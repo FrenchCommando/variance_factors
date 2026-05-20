@@ -32,16 +32,14 @@ from pyarrow import feather
 from scipy.optimize import minimize
 
 from utils.bergomi_likelihood import N_DYNAMIC_PARAMS_WITH_SPOT, joint_negative_log_likelihood
-from utils.cache_paths import OUT_DIR, to_image_path
+from utils.cache_paths import MIN_RAW_DAYS, PANEL_TENOR_DAYS, ROOT, run_subdir, to_image_path
 from utils.data_assembly import (
-    FIXING_INDEX_DEFAULT, N_BUSINESS_DAYS_PER_YEAR, TENOR_DAYS_BENCHMARK, ForwardVariancePanel, assemble_panel,
-    slice_panel,
+    FIXING_INDEX_DEFAULT, N_BUSINESS_DAYS_PER_YEAR, ForwardVariancePanel, assemble_panel, slice_panel,
 )
 from utils.spot_data import FWD_PROXY_ROOT, daily_log_fwd_returns_for_panel_pairs, local_vol_per_panel_pair
 
 logger = logging.getLogger(__name__)
 
-ROOT = "SPX"
 DATE_FROM = dt.date(2025, 1, 2)
 DATE_TO = dt.date(2026, 3, 20)
 WINDOW_SIZES = (20, 40, 60)
@@ -352,7 +350,7 @@ def run_one_window_size(
         full_panel=full_panel, full_spot_returns=full_spot_returns,
         full_sigma_s_per_pair=full_sigma_s_per_pair, window_size=window_size,
     )
-    run_dir = OUT_DIR / run_name_for(window_size=window_size)
+    run_dir = run_subdir(name=run_name_for(window_size=window_size))
     run_dir.mkdir(parents=True, exist_ok=True)
     feather_path = write_feather_table(results=results, run_dir=run_dir)
     logger.info("Wrote %s (%d rows)", feather_path, len(results))
@@ -366,8 +364,9 @@ def main() -> None:
     """Run the rolling with-spot fit on the SPX panel for every WINDOW_SIZES entry."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     full_panel = assemble_panel(
-        root=ROOT, date_from=DATE_FROM, date_to=DATE_TO, tenor_days=TENOR_DAYS_BENCHMARK,
-        fixing_index=FIXING_INDEX_DEFAULT, min_raw_days=7, min_expiries=5, max_extrapolation_fraction=0.10,
+        root=ROOT, date_from=DATE_FROM, date_to=DATE_TO, tenor_days=PANEL_TENOR_DAYS,
+        fixing_index=FIXING_INDEX_DEFAULT, min_raw_days=MIN_RAW_DAYS, min_expiries=5,
+        max_extrapolation_fraction=0.10,
     )
     logger.info(
         "Panel: %d dates, %d pairs, %d strips", len(full_panel.dates), len(full_panel.pair_end_indices),

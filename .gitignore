@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 *.pyc
+.claude/
 
 # Outputs: PNGs are tracked, feather is not (per CLAUDE.md)
 out/**/*.feather

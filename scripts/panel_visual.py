@@ -6,7 +6,9 @@ Three views:
    sample dates, with the 1BD-front sigma_S overlaid as a diamond marker at DTE = 1.  The
    marker is the local-vol anchor that drives the joint-likelihood spot-row scaling.
 2. Cumulative variance V * tau vs business-days-to-expiration -- local non-monotonicity at
-   OPEX neighbors shows up here.
+   third-Friday SPXW neighbors shows up here (the third-Friday listing inherits CBOE's
+   deep-OTM strike chain, which inflates its truncated log-swap integral relative to
+   adjacent regular weeklies that don't list those wings).
 3. Strip forward variance time series across the assembled panel, one line per strip tenor.
 
 Usage:
@@ -19,10 +21,10 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 
-from utils.cache_paths import to_image_path
+from utils.cache_paths import MIN_RAW_DAYS, PANEL_TENOR_DAYS, ROOT, to_image_path
 from utils.calendar_utils import plus_days
 from utils.data_assembly import (
-    FIXING_INDEX_DEFAULT, N_BUSINESS_DAYS_PER_YEAR, TENOR_DAYS_BENCHMARK, assemble_panel,
+    FIXING_INDEX_DEFAULT, N_BUSINESS_DAYS_PER_YEAR, assemble_panel,
     build_varswap_index, load_term_structure_for_date, resample_term_structure,
 )
 from utils.intraday_time import intraday_time_to_expiry, is_am_settled
@@ -30,15 +32,13 @@ from utils.spot_data import FWD_PROXY_ROOT, read_log_swap_mid_at_fixing
 
 logger = logging.getLogger(__name__)
 
-ROOT = "SPX"
 DATE_FROM = dt.date(2025, 9, 1)
 DATE_TO = dt.date(2025, 12, 31)
 FIXING_INDEX = FIXING_INDEX_DEFAULT
-MIN_RAW_DAYS = 7
 MIN_EXPIRIES = 5
 MAX_EXTRAPOLATION_FRACTION = 0.10
 
-TENOR_DAYS = TENOR_DAYS_BENCHMARK
+TENOR_DAYS = PANEL_TENOR_DAYS
 
 SAMPLE_DATES = (
     dt.date(2025, 4, 4),

@@ -25,7 +25,7 @@ import numpy as np
 from scipy.interpolate import PchipInterpolator
 
 from utils.cache_paths import cache_folder_log_swap, log_swap_path
-from utils.calendar_utils import count_business_days, dates_iter
+from utils.calendar_utils import count_business_days, dates_iter, plus_days
 from utils.intraday_time import intraday_time_to_expiry, is_am_settled
 from utils.spot_data import FWD_PROXY_ROOT, read_log_swap_mid_at_fixing
 
@@ -41,6 +41,9 @@ FIXING_INDEX_DEFAULT = 28500
 # 441d-midpoint strip carries large measurement noise.
 TENOR_DAYS_FULL = (1, 2, 3, 5, 10, 21, 42, 63, 126, 189, 252, 378)
 TENOR_DAYS_BENCHMARK = (21, 42, 63, 126, 189, 252, 378)
+# SPXW has ~10-12 months of forward visibility (no LEAPS chain like SPX), so the long end of
+# the benchmark grid is unreachable.  Truncated grid covers what SPXW consistently provides.
+TENOR_DAYS_SPXW = (21, 42, 63, 126, 189)
 
 # April 2025 tariff-shock days drove 5-8 sigma residuals at long strips; rolling windows
 # containing them collapse k_y to its lower bound to absorb the non-Bergomi residual.
@@ -402,7 +405,8 @@ def slice_panel(full_panel: ForwardVariancePanel, start_index: int, end_index: i
 
 def compute_advanced_predictors(  # noqa: PLR0913
     accepted_points: list[list[TermStructurePoint]], valid_pair_indices: list[int],
-    pair_dt_years: np.ndarray, tenor_grid_years: np.ndarray, accepted_dates: list[dt.date], fixing_index: int,
+    pair_dt_years: np.ndarray, tenor_grid_years: np.ndarray, accepted_dates: list[dt.date],
+    fixing_index: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Per-pair predictor curves for tomorrow's strip-xi and endpoint-V via PCHIP advance.
 
@@ -410,9 +414,10 @@ def compute_advanced_predictors(  # noqa: PLR0913
         (1) Advance each option observed at start with tenor tau_i and total variance V_i to
             its predicted (V, tau) at end under Bergomi's martingale-at-fixed-expiration:
                 tau_advanced  =  tau_i - dt
-                V_advanced    =  (V_i * tau_i - X) / tau_advanced
-            X = cumulative variance over [start, end], read **model-free** from the front-tenor
-            variance swap as X = 2 * LogSwapMid[end, start, fixing] (not a proxy).
+                V_advanced    =  (V_i * tau_i - daily_step_cumulative_variance) / tau_advanced
+            daily_step_cumulative_variance is computed via
+            `daily_step_cumulative_variance_min_dtes`: min of the snap-corrected 1-DTE and
+            2-DTE SPXW varswap readings.
         (2) PCHIP-fit on (sqrt(tau_advanced), V_advanced) -- the predicted end-date curve in
             tenor units from end.
         (3) Evaluate at tenor_grid_years -> log V at endpoint tenors (log_v_advanced).
@@ -427,19 +432,18 @@ def compute_advanced_predictors(  # noqa: PLR0913
         advance_years = float(pair_dt_years[output_index])
         start_date = accepted_dates[pair_start_index]
         end_date = accepted_dates[pair_start_index + 1]
-        front_log_swap = read_log_swap_mid_at_fixing(
-            root=FWD_PROXY_ROOT, expiration=end_date, observation_date=start_date, fixing_index=fixing_index,
+        daily_step_cumulative_variance = daily_step_cumulative_variance_min_dtes(
+            start_date=start_date, fixing_index=fixing_index, advance_years=advance_years,
         )
-        cumulative_advance_variance = 2.0 * front_log_swap
         advanced_pchip_fit = build_advanced_pchip(
             points=accepted_points[pair_start_index], advance_years=advance_years,
-            cumulative_one_step=cumulative_advance_variance,
+            daily_step_cumulative_variance=daily_step_cumulative_variance,
         )
         v_at_grid = np.asarray(advanced_pchip_fit(np.sqrt(tenor_grid_years)))
         if np.any(v_at_grid <= 0):
             msg = (
-                f"Non-positive advanced V at pair starting index {pair_start_index} "
-                f"-- PCHIP-extrapolated curve dips below zero"
+                f"Non-positive advanced V at pair {start_date}->{end_date} -- "
+                f"PCHIP-extrapolated curve dips below zero"
             )
             raise ValueError(msg)
         cumulative_advanced = v_at_grid * tenor_grid_years
@@ -447,8 +451,8 @@ def compute_advanced_predictors(  # noqa: PLR0913
         advanced_strip_variance = np.diff(cumulative_advanced) / strip_lengths
         if np.any(advanced_strip_variance <= 0):
             msg = (
-                f"Non-positive advanced strip variance at pair starting index {pair_start_index} "
-                f"-- term structure is not monotone enough"
+                f"Non-positive advanced strip variance at pair {start_date}->{end_date} -- "
+                f"term structure is not monotone enough"
             )
             raise ValueError(msg)
         log_xi_advanced[output_index] = np.log(advanced_strip_variance)
@@ -456,15 +460,64 @@ def compute_advanced_predictors(  # noqa: PLR0913
     return log_xi_advanced, log_v_advanced
 
 
+def snap_corrected_dte_cumulative_variance(
+    start_date: dt.date, raw_days: int, fixing_index: int, advance_years: float,
+) -> float:
+    """Cumulative variance over [snap, snap + advance_years] from one SPXW varswap reading.
+
+    Reads 2 * LogSwap_t^{t + raw_days BD} at fixing_index and rescales by
+    (advance_years / tau_to_close) to convert from the snap-to-PM-close integration window
+    into the snap-to-snap window the advance step uses.  The scaling assumes variance is flat
+    over the sub-day fraction between snap and close on the expiry date.  At a 15:55 ET snap
+    the correction is ~0.991; at 14:00 ET it would be ~0.823 -- worth doing structurally so
+    the formula stays right if the snap time moves.
+    """
+    end_date = plus_days(date=start_date, n_days=raw_days)
+    log_swap = read_log_swap_mid_at_fixing(
+        root=FWD_PROXY_ROOT, expiration=end_date, observation_date=start_date, fixing_index=fixing_index,
+    )
+    tau_to_close = intraday_time_to_expiry(
+        raw_days=raw_days, timestamp_index=fixing_index, am_settled=is_am_settled(root=FWD_PROXY_ROOT),
+    )
+    return 2.0 * log_swap * (advance_years / tau_to_close)
+
+
+def daily_step_cumulative_variance_min_dtes(
+    start_date: dt.date, fixing_index: int, advance_years: float,
+) -> float:
+    """Daily-step cumulative variance: min of snap-corrected 1-DTE and 2-DTE SPXW varswap reads.
+
+    Both DTE candidates give scaled cumulative-variance estimates for the same advance-step
+    window [snap, snap + advance_years].  `min` rejects whichever happens to span a third-Friday
+    SPXW expiration, where the truncated `sum dK/K^2 * OTM` integral is structurally inflated
+    by deep-OTM put strikes that adjacent weeklies are missing (third-Friday SPXW lists down to
+    K~200 vs weeklies' K~2400 -- it inherits the CBOE third-Friday strike chain even though it
+    is the PM-settled sibling of the AM-settled SPX SET that "OPEX" canonically refers to).
+    The third-Friday listing falls at 1-DTE on Thu->Fri pairs and at 2-DTE on Wed->Fri pairs;
+    either way `min` picks the cleaner regular-weekly reading.
+
+    This is the production formula -- see NOTES.md "Daily-step cumulative variance" for why
+    `min` over the two front DTEs is the right object to use here.
+    """
+    x_1dte = snap_corrected_dte_cumulative_variance(
+        start_date=start_date, raw_days=1, fixing_index=fixing_index, advance_years=advance_years,
+    )
+    x_2dte = snap_corrected_dte_cumulative_variance(
+        start_date=start_date, raw_days=2, fixing_index=fixing_index, advance_years=advance_years,
+    )
+    return min(x_1dte, x_2dte)
+
+
 def build_advanced_pchip(
-    points: list[TermStructurePoint], advance_years: float, cumulative_one_step: float,
+    points: list[TermStructurePoint], advance_years: float, daily_step_cumulative_variance: float,
 ) -> PchipInterpolator:
     """Advance each option's (tau, V) to its time-(t+dt) predicted value, then PCHIP-fit.
 
     Each option's total annualized variance V_i over [t, t+tau_i] decomposes as
-        V_i * tau_i  =  X  +  V_advanced_i * (tau_i - dt)
-    where X = cumulative_one_step is the cumulative variance over [t, t+dt], read model-free
-    by the caller from the front-tenor varswap as 2 * LogSwap_t^{t+dt}.
+        V_i * tau_i  =  daily_step_cumulative_variance  +  V_advanced_i * (tau_i - dt)
+    where the caller supplies daily_step_cumulative_variance (the cumulative variance over
+    the one-business-day step [t, t+dt]) from the chain via
+    `daily_step_cumulative_variance_from_chain`.
     """
     raw_taus = np.array([point.time_to_expiry for point in points])
     raw_variances = np.array([point.total_variance for point in points])
@@ -482,12 +535,12 @@ def build_advanced_pchip(
         raise ValueError(msg)
 
     advanced_taus = unique_taus - advance_years
-    advanced_cumulative_variance = variances * unique_taus - cumulative_one_step
+    advanced_cumulative_variance = variances * unique_taus - daily_step_cumulative_variance
     advanced_variances = advanced_cumulative_variance / advanced_taus
     if np.any(advanced_taus <= 0) or np.any(advanced_variances <= 0):
         msg = (
             f"Non-positive advanced (tau, V) for options at {len(unique_taus)} tenors "
-            f"(tau_first={tau_first}, X={cumulative_one_step})"
+            f"(tau_first={tau_first}, daily_step_cumulative_variance={daily_step_cumulative_variance})"
         )
         raise ValueError(msg)
     return PchipInterpolator(x=np.sqrt(advanced_taus), y=advanced_variances, extrapolate=True)

@@ -19,14 +19,13 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 
-from utils.cache_paths import to_image_path
+from utils.cache_paths import MIN_RAW_DAYS, PANEL_TENOR_DAYS, ROOT, to_image_path
 from utils.data_assembly import (
-    FIXING_INDEX_DEFAULT, N_BUSINESS_DAYS_PER_YEAR, TENOR_DAYS_BENCHMARK, ForwardVariancePanel, assemble_panel,
+    FIXING_INDEX_DEFAULT, N_BUSINESS_DAYS_PER_YEAR, ForwardVariancePanel, assemble_panel,
 )
 
 logger = logging.getLogger(__name__)
 
-ROOT = "SPX"
 DATE_FROM = dt.date(2025, 1, 2)
 DATE_TO = dt.date(2026, 3, 20)
 
@@ -140,8 +139,9 @@ def main() -> None:
     """Build the panel and show the three-panel V advance diagnostic."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     panel = assemble_panel(
-        root=ROOT, date_from=DATE_FROM, date_to=DATE_TO, tenor_days=TENOR_DAYS_BENCHMARK,
-        fixing_index=FIXING_INDEX_DEFAULT, min_raw_days=7, min_expiries=5, max_extrapolation_fraction=0.10,
+        root=ROOT, date_from=DATE_FROM, date_to=DATE_TO, tenor_days=PANEL_TENOR_DAYS,
+        fixing_index=FIXING_INDEX_DEFAULT, min_raw_days=MIN_RAW_DAYS, min_expiries=5,
+        max_extrapolation_fraction=0.10,
     )
     sample_pair_index = find_target_pair_index(panel=panel, sample_date=SAMPLE_DATE)
     plot_advance_visual_v(panel=panel, sample_pair_index=sample_pair_index)

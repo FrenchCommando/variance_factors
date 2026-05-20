@@ -27,11 +27,11 @@ import numpy as np
 from pyarrow import feather
 
 from scripts.realised_innovations import realised_innovations_with_global_params
-from scripts.rolling_calibration import DATE_FROM, DATE_TO, ROOT, run_name_for
+from scripts.rolling_calibration import DATE_FROM, DATE_TO, run_name_for
 from utils.bergomi_two_factor import BergomiTwoFactorParams, observation_matrix_v_constant_tenor
-from utils.cache_paths import OUT_DIR, to_image_path
+from utils.cache_paths import MIN_RAW_DAYS, PANEL_TENOR_DAYS, ROOT, run_subdir, to_image_path
 from utils.data_assembly import (
-    FIXING_INDEX_DEFAULT, N_BUSINESS_DAYS_PER_YEAR, TENOR_DAYS_BENCHMARK, ForwardVariancePanel, assemble_panel,
+    FIXING_INDEX_DEFAULT, N_BUSINESS_DAYS_PER_YEAR, ForwardVariancePanel, assemble_panel,
 )
 from utils.spot_data import FWD_PROXY_ROOT, daily_log_fwd_returns_for_panel_pairs, local_vol_per_panel_pair
 
@@ -48,7 +48,7 @@ FIGURE_NUMBERS = ("19", "20", "21")
 
 def feather_path() -> Path:
     """Path to the canonical 60bd rolling fit's params_timeseries.feather."""
-    return OUT_DIR / RUN_NAME / "params_timeseries.feather"
+    return run_subdir(name=RUN_NAME) / "params_timeseries.feather"
 
 
 def select_calibration_dates(fit_dates: list[dt.date], quantiles: tuple[float, ...]) -> list[dt.date]:
@@ -188,8 +188,9 @@ def main() -> None:
     """Generate IS/OOS predicted-residual diagnostic at three calibration dates."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     full_panel = assemble_panel(
-        root=ROOT, date_from=DATE_FROM, date_to=DATE_TO, tenor_days=TENOR_DAYS_BENCHMARK,
-        fixing_index=FIXING_INDEX_DEFAULT, min_raw_days=7, min_expiries=5, max_extrapolation_fraction=0.10,
+        root=ROOT, date_from=DATE_FROM, date_to=DATE_TO, tenor_days=PANEL_TENOR_DAYS,
+        fixing_index=FIXING_INDEX_DEFAULT, min_raw_days=MIN_RAW_DAYS, min_expiries=5,
+        max_extrapolation_fraction=0.10,
     )
     full_spot_returns = daily_log_fwd_returns_for_panel_pairs(
         dates=full_panel.dates, pair_end_indices=full_panel.pair_end_indices,

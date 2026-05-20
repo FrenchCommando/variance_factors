@@ -38,15 +38,14 @@ from utils.bergomi_likelihood import (
     gls_shock_estimate, innovation_covariance_with_spot, joint_observation_matrix,
 )
 from utils.bergomi_two_factor import BergomiTwoFactorParams, observation_matrix_v_constant_tenor
-from utils.cache_paths import OUT_DIR, to_image_path
+from utils.cache_paths import MIN_RAW_DAYS, PANEL_TENOR_DAYS, ROOT, run_subdir, to_image_path
 from utils.data_assembly import (
-    FIXING_INDEX_DEFAULT, N_BUSINESS_DAYS_PER_YEAR, TENOR_DAYS_BENCHMARK, ForwardVariancePanel, assemble_panel,
+    FIXING_INDEX_DEFAULT, N_BUSINESS_DAYS_PER_YEAR, ForwardVariancePanel, assemble_panel,
 )
 from utils.spot_data import FWD_PROXY_ROOT, daily_log_fwd_returns_for_panel_pairs, local_vol_per_panel_pair
 
 logger = logging.getLogger(__name__)
 
-ROOT = "SPX"
 DATE_FROM = dt.date(2025, 1, 2)
 DATE_TO = dt.date(2026, 3, 20)
 WINDOW_SIZE = 60
@@ -257,7 +256,7 @@ def plot_v_residual_acf(panel: ForwardVariancePanel, normalized: np.ndarray, pai
 def main() -> None:
     """Recompute V residuals + factor decomposition + ACF for the rolling 60bd fit."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    feather_path = OUT_DIR / RUN_NAME / "params_timeseries.feather"
+    feather_path = run_subdir(name=RUN_NAME) / "params_timeseries.feather"
     if not feather_path.exists():
         msg = f"{feather_path} missing -- run rolling_calibration first"
         raise FileNotFoundError(msg)
@@ -265,8 +264,9 @@ def main() -> None:
     fit_table = {name: list(table.column(name).to_pylist()) for name in table.column_names}
 
     full_panel = assemble_panel(
-        root=ROOT, date_from=DATE_FROM, date_to=DATE_TO, tenor_days=TENOR_DAYS_BENCHMARK,
-        fixing_index=FIXING_INDEX_DEFAULT, min_raw_days=7, min_expiries=5, max_extrapolation_fraction=0.10,
+        root=ROOT, date_from=DATE_FROM, date_to=DATE_TO, tenor_days=PANEL_TENOR_DAYS,
+        fixing_index=FIXING_INDEX_DEFAULT, min_raw_days=MIN_RAW_DAYS, min_expiries=5,
+        max_extrapolation_fraction=0.10,
     )
     full_spot_returns = daily_log_fwd_returns_for_panel_pairs(
         dates=full_panel.dates, pair_end_indices=full_panel.pair_end_indices, fixing_index=FIXING_INDEX_DEFAULT,

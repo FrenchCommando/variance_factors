@@ -56,9 +56,31 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = REPO_ROOT / "out"
 
 
-def to_image_path(name: str, subdir: str | None = None) -> Path:
-    """Build the output PNG path for a plot, replacing whitespace and punctuation with underscores."""
+# Calibration root and min-tenor filter, both env-overridable so the same scripts can run
+# either SPX or SPXW panels without code edits.  SPXW has daily expirations -- the 7 BD floor
+# is a SPX-only fix to drop the front-week vol risk premium that doesn't lie on the long-tenor
+# forward-variance term structure.  For SPXW, drop only literal 0/1 BD expirations.
+ROOT = os.environ.get("VARIANCE_FACTORS_ROOT", "SPX")
+_DEFAULT_MIN_RAW_DAYS = {"SPX": 7, "SPXW": 2}
+MIN_RAW_DAYS = int(os.environ.get("VARIANCE_FACTORS_MIN_RAW_DAYS", _DEFAULT_MIN_RAW_DAYS.get(ROOT, 2)))
+
+# Tenor grid: SPX reaches 378 BD via its LEAPS chain; SPXW typically goes ~210 BD out so
+# the long end of the benchmark grid is unreachable and we use a truncated 5-endpoint grid.
+_DEFAULT_TENOR_DAYS: dict[str, tuple[int, ...]] = {
+    "SPX": (21, 42, 63, 126, 189, 252, 378),
+    "SPXW": (21, 42, 63, 126, 189),
+}
+PANEL_TENOR_DAYS = _DEFAULT_TENOR_DAYS.get(ROOT, _DEFAULT_TENOR_DAYS["SPX"])
+
+
+def run_subdir(name: str) -> Path:
+    """Output sub-directory namespaced by ROOT so SPX and SPXW results coexist."""
+    return OUT_DIR / ROOT / name
+
+
+def to_image_path(name: str) -> Path:
+    """Build the output PNG path, nested under `out/{ROOT}/` alongside this root's feathers."""
     clean = name.replace(" ", "_").replace(".", "_").replace("|", "_").replace(":", "")
-    folder = OUT_DIR / subdir if subdir else OUT_DIR
+    folder = OUT_DIR / ROOT
     folder.mkdir(parents=True, exist_ok=True)
     return folder / f"{clean}.png"

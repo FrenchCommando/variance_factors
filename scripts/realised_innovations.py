@@ -26,13 +26,11 @@ import numpy as np
 import pyarrow as pa
 from pyarrow import feather
 
-from scripts.rolling_calibration import DATE_FROM, DATE_TO, ROOT, WINDOW_SIZES, run_name_for
+from scripts.rolling_calibration import DATE_FROM, DATE_TO, WINDOW_SIZES, run_name_for
 from utils.bergomi_likelihood import gls_shock_estimate, innovation_covariance_with_spot, joint_observation_matrix
 from utils.bergomi_two_factor import BergomiTwoFactorParams
-from utils.cache_paths import OUT_DIR, to_image_path
-from utils.data_assembly import (
-    FIXING_INDEX_DEFAULT, TENOR_DAYS_BENCHMARK, ForwardVariancePanel, assemble_panel,
-)
+from utils.cache_paths import MIN_RAW_DAYS, PANEL_TENOR_DAYS, ROOT, run_subdir, to_image_path
+from utils.data_assembly import FIXING_INDEX_DEFAULT, ForwardVariancePanel, assemble_panel
 from utils.spot_data import FWD_PROXY_ROOT, daily_log_fwd_returns_for_panel_pairs, local_vol_per_panel_pair
 
 logger = logging.getLogger(__name__)
@@ -184,20 +182,21 @@ def plot_realised_innovations(records: dict, label: str, figure_number: str) -> 
 
 def feather_path_for(window_size: int) -> Path:
     """Realised-innovations feather path for the given rolling window size."""
-    return OUT_DIR / run_name_for(window_size=window_size) / "realised_innovations.feather"
+    return run_subdir(name=run_name_for(window_size=window_size)) / "realised_innovations.feather"
 
 
 def params_path_for(window_size: int) -> Path:
     """Params time-series feather path for the given rolling window size."""
-    return OUT_DIR / run_name_for(window_size=window_size) / "params_timeseries.feather"
+    return run_subdir(name=run_name_for(window_size=window_size)) / "params_timeseries.feather"
 
 
 def main() -> None:
     """Compute realised innovations for every window size that has a fitted feather."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     full_panel = assemble_panel(
-        root=ROOT, date_from=DATE_FROM, date_to=DATE_TO, tenor_days=TENOR_DAYS_BENCHMARK,
-        fixing_index=FIXING_INDEX_DEFAULT, min_raw_days=7, min_expiries=5, max_extrapolation_fraction=0.10,
+        root=ROOT, date_from=DATE_FROM, date_to=DATE_TO, tenor_days=PANEL_TENOR_DAYS,
+        fixing_index=FIXING_INDEX_DEFAULT, min_raw_days=MIN_RAW_DAYS, min_expiries=5,
+        max_extrapolation_fraction=0.10,
     )
     full_spot_returns = daily_log_fwd_returns_for_panel_pairs(
         dates=full_panel.dates, pair_end_indices=full_panel.pair_end_indices, fixing_index=FIXING_INDEX_DEFAULT,

@@ -75,18 +75,23 @@ REM Panel-data sanity checks (data only, no fit needed) (#01-04)
 .venv\Scripts\python -m scripts.advance_visual
 ```
 
-Outputs:
+Outputs are namespaced by ROOT so SPX and SPXW results coexist:
 
 ```
 out/
-  rolling_{N}bd/
-    params_timeseries.feather       (gitignored)
-    realised_innovations.feather    (gitignored)
-  full_panel/
-    params.feather                  (gitignored)
-    realised_innovations.feather    (gitignored)
-  *.png                             (tracked)
+  {ROOT}/                              (e.g. SPX/, SPXW/)
+    *.png                              (tracked)
+    rolling_{N}bd/
+      params_timeseries.feather        (gitignored)
+      realised_innovations.feather     (gitignored)
+    full_panel/
+      params.feather                   (gitignored)
+      realised_innovations.feather     (gitignored)
 ```
+
+ROOT comes from `VARIANCE_FACTORS_ROOT` (default `SPX`).  PNG filenames keep
+their `_{ROOT}` suffix so the file alone tells you which root produced it
+even after a copy out of its folder.
 
 ## PNGs
 

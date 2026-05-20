@@ -24,11 +24,11 @@ from pyarrow import feather
 from scripts.realised_innovations import (
     FIGURE_NUMBER_FULL_PANEL, plot_realised_innovations, realised_innovations_with_global_params,
 )
-from scripts.rolling_calibration import DATE_FROM, DATE_TO, ROOT, fit_window, make_cold_start, make_full_bounds
+from scripts.rolling_calibration import DATE_FROM, DATE_TO, fit_window, make_cold_start, make_full_bounds
 from utils.bergomi_likelihood import N_DYNAMIC_PARAMS_WITH_SPOT
 from utils.bergomi_two_factor import BergomiTwoFactorParams
-from utils.cache_paths import OUT_DIR
-from utils.data_assembly import FIXING_INDEX_DEFAULT, TENOR_DAYS_BENCHMARK, assemble_panel
+from utils.cache_paths import MIN_RAW_DAYS, PANEL_TENOR_DAYS, ROOT, run_subdir
+from utils.data_assembly import FIXING_INDEX_DEFAULT, assemble_panel
 from utils.spot_data import FWD_PROXY_ROOT, daily_log_fwd_returns_for_panel_pairs, local_vol_per_panel_pair
 
 logger = logging.getLogger(__name__)
@@ -37,8 +37,8 @@ RUN_NAME = "full_panel"
 
 
 def run_dir() -> Path:
-    """Return the output directory for the full-panel fit."""
-    return OUT_DIR / RUN_NAME
+    """Return the output directory for the full-panel fit (namespaced by ROOT)."""
+    return run_subdir(name=RUN_NAME)
 
 
 def write_params_feather(
@@ -67,8 +67,9 @@ def main() -> None:
     """Run the full-panel fit, write params + realised innovations."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     full_panel = assemble_panel(
-        root=ROOT, date_from=DATE_FROM, date_to=DATE_TO, tenor_days=TENOR_DAYS_BENCHMARK,
-        fixing_index=FIXING_INDEX_DEFAULT, min_raw_days=7, min_expiries=5, max_extrapolation_fraction=0.10,
+        root=ROOT, date_from=DATE_FROM, date_to=DATE_TO, tenor_days=PANEL_TENOR_DAYS,
+        fixing_index=FIXING_INDEX_DEFAULT, min_raw_days=MIN_RAW_DAYS, min_expiries=5,
+        max_extrapolation_fraction=0.10,
     )
     n_strips = len(full_panel.strip_tenors_years)
     spot_returns = daily_log_fwd_returns_for_panel_pairs(
